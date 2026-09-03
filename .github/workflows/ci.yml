@@ -133,6 +133,27 @@ jobs:
       #     docker push $ECR_REGISTRY/${{ env.SERVICE_NAME }}:$IMAGE_TAG
       #
       # --- GitOps tag update disabled: depends on the ECR push above, still paused too ---
-      # once AWS access is back AND the block above is uncommented, add here a step that
-      # edits k8s/overlays/prod/patch-images.yaml in the root repo with the new IMAGE_TAG
-      # and commits+pushes it, so ArgoCD picks up the change automatically.
+      # once AWS access is back AND the block above is uncommented, remove the leading
+      # "# " from every line below to enable it. Needs a repo secret GITOPS_PAT: a GitHub
+      # Personal Access Token with write access to the toggle-master-microservices repo
+      # (this service's own GITHUB_TOKEN can't push to a DIFFERENT repo, only its own).
+      # - name: Checkout GitOps repo
+      #   if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      #   uses: actions/checkout@v4
+      #   with:
+      #     repository: ProjetoFIAPToggleMaster/toggle-master-microservices
+      #     token: ${{ secrets.GITOPS_PAT }}
+      #     path: gitops-repo
+      #
+      # - name: Update image tag in GitOps repo
+      #   if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      #   env:
+      #     IMAGE_TAG: v1.0.0-${{ steps.vars.outputs.sha_short }}
+      #   run: |
+      #     cd gitops-repo
+      #     sed -i "s|\(image: .*/${{ env.SERVICE_NAME }}\):.*|\1:$IMAGE_TAG|" k8s/overlays/prod/patch-images.yaml
+      #     git config user.name "github-actions[bot]"
+      #     git config user.email "github-actions[bot]@users.noreply.github.com"
+      #     git add k8s/overlays/prod/patch-images.yaml
+      #     git commit -m "chore: update ${{ env.SERVICE_NAME }} image to $IMAGE_TAG"
+      #     git push
