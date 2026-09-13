@@ -1,4 +1,3 @@
-import hashlib
 import os
 import sys
 import threading
@@ -10,10 +9,6 @@ import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
 from flask import Flask, jsonify
 from dotenv import load_dotenv
-
-def hash_event_id(event_id):
-    """ Gera um hash do event_id para deduplicacao """
-    return hashlib.md5(event_id.encode()).hexdigest()
 
 # Configura o logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
