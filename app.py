@@ -9,6 +9,8 @@ import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
 from flask import Flask, jsonify
 from dotenv import load_dotenv
+from opentelemetry import propagate, trace
+from opentelemetry.trace import SpanKind, Status, StatusCode
 
 # Configura o logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -43,7 +45,35 @@ except Exception as e:
 
 # --- SQS Worker ---
 
+tracer = trace.get_tracer(__name__)
+SQS_QUEUE_NAME = SQS_QUEUE_URL.rstrip("/").rsplit("/", 1)[-1]
+
+
+def message_context(message):
+    carrier = {
+        key: attr["StringValue"]
+        for key, attr in (message.get("MessageAttributes") or {}).items()
+        if "StringValue" in attr
+    }
+    return propagate.extract(carrier)
+
+
 def process_message(message):
+    with tracer.start_as_current_span(
+        f"{SQS_QUEUE_NAME} process",
+        context=message_context(message),
+        kind=SpanKind.CONSUMER,
+        attributes={
+            "messaging.system": "aws_sqs",
+            "messaging.operation.type": "process",
+            "messaging.destination.name": SQS_QUEUE_NAME,
+            "messaging.message.id": message["MessageId"],
+        },
+    ) as span:
+        handle_message(message, span)
+
+
+def handle_message(message, span):
     """ Processa uma única mensagem SQS e a insere no DynamoDB """
     try:
         log.info(f"Processando mensagem ID: {message['MessageId']}")
@@ -75,14 +105,20 @@ def process_message(message):
             ReceiptHandle=message['ReceiptHandle']
         )
 
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
         log.error(f"Erro ao decodificar JSON da mensagem ID: {message['MessageId']}")
+        span.record_exception(e)
+        span.set_status(Status(StatusCode.ERROR))
         # Não deleta a mensagem, pode ser uma "poison pill"
     except ClientError as e:
         log.error(f"Erro do Boto3 (DynamoDB ou SQS) ao processar {message['MessageId']}: {e}")
+        span.record_exception(e)
+        span.set_status(Status(StatusCode.ERROR))
         # Não deleta a mensagem, tenta novamente
     except Exception as e:
         log.error(f"Erro inesperado ao processar {message['MessageId']}: {e}")
+        span.record_exception(e)
+        span.set_status(Status(StatusCode.ERROR))
         # Não deleta a mensagem, tenta novamente
 
 
@@ -95,7 +131,8 @@ def sqs_worker_loop():
             response = sqs_client.receive_message(
                 QueueUrl=SQS_QUEUE_URL,
                 MaxNumberOfMessages=10,  # Processa em lotes de até 10
-                WaitTimeSeconds=20
+                WaitTimeSeconds=20,
+                MessageAttributeNames=["All"]
             )
 
             messages = response.get('Messages', [])
